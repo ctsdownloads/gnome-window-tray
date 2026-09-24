@@ -30,6 +30,41 @@ function prefixesOf(config) {
 }
 
 /**
+ * Extract the first URL hostname from notification body text. Some Chromium
+ * notifications put the sending site's URL first; the browser does not expose
+ * that origin as notification metadata.
+ */
+export function notificationHosts(...parts) {
+    const text = parts.filter(value => typeof value === 'string').join('\n')
+        .replace(/&amp;/gi, '&').replace(/&#x2f;/gi, '/').replace(/&#47;/g, '/');
+    for (const match of text.matchAll(/https?:\/\/([^\s<>"'`]+)/gi)) {
+        const candidate = match[1].replace(/[),.;!?\]]+$/, '');
+        try {
+            return [new URL(`https://${candidate}`).hostname.toLowerCase()];
+        } catch (_) {
+            // Ignore malformed links in notification markup or prose.
+        }
+    }
+    return [];
+}
+
+function domainMatches(host, domain) {
+    const normalized = String(domain ?? '').toLowerCase().replace(/^\.+|\.+$/g, '');
+    return normalized && (host === normalized || host.endsWith(`.${normalized}`));
+}
+
+/** Return configs uniquely identified by explicit notification-domain hints. */
+export function configsForNotificationHosts(hosts, trayApps) {
+    const matches = new Set();
+    for (const config of trayApps ?? []) {
+        if ((config.notificationDomains ?? []).some(domain =>
+            hosts.some(host => domainMatches(host, domain))))
+            matches.add(config);
+    }
+    return [...matches];
+}
+
+/**
  * The match rule: a configured prefix matches any application whose normalized
  * desktop ID *starts with* it. So `firefox` also matches `firefox-browser`.
  * Use a full desktop ID for an effectively exact match.

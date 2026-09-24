@@ -11,7 +11,7 @@
 
 import GLib from 'gi://GLib';
 
-import {trayAppsEqual} from '../window-tray@buschjaeger.github.io/config.js';
+import {DEFAULT_CONFIG, trayAppsEqual} from '../window-tray@buschjaeger.github.io/config.js';
 import * as matching from '../window-tray@buschjaeger.github.io/matching.js';
 import * as patchRegistry from '../window-tray@buschjaeger.github.io/patchRegistry.js';
 import * as logging from '../window-tray@buschjaeger.github.io/logging.js';
@@ -78,6 +78,8 @@ const firefox = {name: 'Firefox', desktopIdPrefixes: ['firefox']};
 const mattermost = {name: 'Mattermost', desktopIdPrefixes: ['Mattermost']};
 const pwa = {name: 'Mattermost PWA', desktopIdPrefixes: [`chrome-${CRX_ID}-Default`]};
 const TRAY = [firefox, mattermost, pwa];
+
+check('moving activated windows defaults to enabled', DEFAULT_CONFIG.moveToCurrentWorkspace);
 
 // trayAppsEqual ------------------------------------------------------------
 

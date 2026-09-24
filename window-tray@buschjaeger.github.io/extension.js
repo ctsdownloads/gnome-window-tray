@@ -16,11 +16,11 @@
 //          supported path, fully disconnected on disable.
 //       2. PanelMenu.Button via Main.panel.addToStatusArea — the supported
 //          extension point for panel UI.
-//       3. Patching Shell.App.prototype.{activate,activate_full,activate_window}
-//          — required because Shell offers no signal for "the user asked to
-//          activate this application". These are installed through
-//          patchRegistry.js, which refuses to stack, restores by identity, and
-//          unwinds in reverse order. There is no patching of Meta types.
+//       3. Patching Shell.App.prototype activation methods and
+//          Meta.Workspace.activate_with_focus — required because Shell offers
+//          no signal for application/window activation. These are installed
+//          through patchRegistry.js, which refuses to stack, restores by
+//          identity, and unwinds in reverse order.
 
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
@@ -45,13 +45,23 @@ const WINDOW_RECHECK_DELAY_MS = 500;
 // Deferred window-list restore after disable: Shell rebuilds overview UI across
 // several main-loop turns, so cleanup must not run inside that transaction.
 const DEFERRED_CLEANUP_DELAY_MS = 250;
-// A generic-browser notification is attributed to the PWA that takes focus
-// within this window.
-const BROWSER_NOTIFICATION_TIMEOUT_MS = 3000;
 // Native notification actions are resolved by the application. Remember where
 // the action was invoked long enough to move the window the app actually
 // presents, rather than guessing a window from the notification source.
 const NOTIFICATION_ACTIVATION_TIMEOUT_MS = 3000;
+
+// Workspace.activate_with_focus() is the one activation path that retains the
+// exact Meta.Window for Chromium PWAs.  Do not intercept the same call when it
+// came from Mutter's explicit move-to-workspace keybindings.
+const MOVE_TO_WORKSPACE_ACTIONS = new Set([
+    ...Array.from({length: 12}, (_, index) =>
+        Meta.KeyBindingAction[`MOVE_TO_WORKSPACE_${index + 1}`]),
+    Meta.KeyBindingAction.MOVE_TO_WORKSPACE_LAST,
+    Meta.KeyBindingAction.MOVE_TO_WORKSPACE_LEFT,
+    Meta.KeyBindingAction.MOVE_TO_WORKSPACE_RIGHT,
+    Meta.KeyBindingAction.MOVE_TO_WORKSPACE_UP,
+    Meta.KeyBindingAction.MOVE_TO_WORKSPACE_DOWN,
+].filter(value => value !== undefined));
 
 const PANEL_ICON = new Gio.FileIcon({
     file: Gio.File.new_for_uri(import.meta.url).get_parent()
@@ -200,8 +210,6 @@ export default class WindowTrayExtension {
         this._cleanupTimers = new Set();
         this._notificationHooks = new Map();
         this._notificationSourceSignals = new Map();
-        this._pendingBrowserNotification = null;
-        this._pendingBrowserNotificationTimer = 0;
         this._pendingNotificationActivation = null;
         this._pendingNotificationActivationTimer = 0;
         this._signals = [];
@@ -223,6 +231,7 @@ export default class WindowTrayExtension {
         this._scanWindows();
         this._rememberFocusedApp();
         this._installAppActivationHooks();
+        this._installWindowActivationHook();
         this._messageTraySignal = Main.messageTray.connect(
             'source-added', (_tray, source) => this._watchNotificationSource(source));
         this._scanNotificationSources();
@@ -279,8 +288,6 @@ export default class WindowTrayExtension {
         this._cancelAll(this._windowTimers);
         this._configUnwatch?.();
         this._configUnwatch = null;
-        this._cancel(this, '_pendingBrowserNotificationTimer');
-        this._pendingBrowserNotification = null;
         this._cancel(this, '_pendingNotificationActivationTimer');
         this._pendingNotificationActivation = null;
 
@@ -431,13 +438,16 @@ export default class WindowTrayExtension {
             hiddenFromWindowList: false,
             stuckForTray: false,
             minimized: window.minimized,
+            signalIds: [],
         };
         this._windowRecords.set(window, record);
 
-        window.connect('notify::minimized', () => this._syncWindowTrayState(window));
-        window.connect('notify::title', () => this._indicator.updateWindow(window));
+        record.signalIds.push(
+            window.connect('notify::minimized', () => this._syncWindowTrayState(window)),
+            window.connect('notify::title', () => this._indicator?.updateWindow(window)),
+        );
         // Do not hold a JS reference to an unmanaged window beyond this callback.
-        window.connect('unmanaged', () => this._untrackWindow(window));
+        record.signalIds.push(window.connect('unmanaged', () => this._untrackWindow(window)));
 
         this._syncWindowTrayState(window);
         debug('tray', `tracking ${config.name}: "${windowTitle(window)}"`);
@@ -448,6 +458,14 @@ export default class WindowTrayExtension {
         if (!record)
             return;
         this._windowRecords.delete(window);
+        for (const signalId of record.signalIds) {
+            try {
+                window.disconnect(signalId);
+            } catch (_) {
+                // An unmanaged Meta.Window may already have disposed its signals.
+            }
+        }
+        record.signalIds.length = 0;
         this._indicator?.removeWindow(window);
         this._restoreWorkspaceOwnership(window, record);
         if (deferWindowListRestore)
@@ -555,11 +573,14 @@ export default class WindowTrayExtension {
             return false;
 
         const pending = this._pendingNotificationActivation;
-        const target = workspaceExists(requestedTarget)
+        const requested = workspaceExists(requestedTarget)
             ? requestedTarget
             : pending?.config === record.config && workspaceExists(pending.workspace)
                 ? pending.workspace
-                : global.workspace_manager.get_active_workspace();
+                : null;
+        const target = this._config.moveToCurrentWorkspace
+            ? requested ?? global.workspace_manager.get_active_workspace()
+            : window.get_workspace();
         try {
             if (pending?.config === record.config)
                 this._clearPendingNotificationActivation();
@@ -583,7 +604,8 @@ export default class WindowTrayExtension {
 
     _needsToComeHere(window) {
         return window.minimized ||
-            window.get_workspace() !== global.workspace_manager.get_active_workspace();
+            this._config.moveToCurrentWorkspace &&
+                window.get_workspace() !== global.workspace_manager.get_active_workspace();
     }
 
     /**
@@ -637,6 +659,43 @@ export default class WindowTrayExtension {
         });
     }
 
+    // Shell.App identifies Chromium PWA windows as the generic browser in some
+    // activation paths. Workspace.activate_with_focus(), however, receives the
+    // exact window chosen by Shell/Brave. Intercepting it also restores the
+    // intended behaviour for visible managed windows on another workspace.
+    _installWindowActivationHook() {
+        const extension = this;
+        patchRegistry.patch(Meta.Workspace.prototype, 'activate_with_focus',
+            function (original, window, timestamp) {
+                if (extension._enabled && window && extension._windowRecords.has(window)) {
+                    const workspace = window.get_workspace?.();
+                    debug('activation', `Workspace.activate_with_focus("${windowTitle(window)}", `
+                        + `workspace ${workspace?.index?.() ?? '?'})`);
+                }
+                if (extension._enabled && window &&
+                    extension._windowRecords.has(window) &&
+                    extension._needsToComeHere(window) &&
+                    !extension._isMoveToWorkspaceKeybinding()) {
+                    try {
+                        if (extension._bringWindowHere(window, 'window activation'))
+                            return undefined;
+                    } catch (e) {
+                        error(`window activation handler failed: ${e.message}`);
+                    }
+                }
+                return original.call(this, window, timestamp);
+            });
+    }
+
+    _isMoveToWorkspaceKeybinding() {
+        const event = Clutter.get_current_event();
+        if (!event || event.type() !== Clutter.EventType.KEY_PRESS)
+            return false;
+        const action = global.display.get_keybinding_action(
+            event.get_key_code(), event.get_state());
+        return MOVE_TO_WORKSPACE_ACTIONS.has(action);
+    }
+
     _patchAppMethod(method, onTrayApp) {
         const extension = this;
         patchRegistry.patch(Shell.App.prototype, method, function (original, ...args) {
@@ -661,7 +720,6 @@ export default class WindowTrayExtension {
 
     _onFocusWindowChanged() {
         this._completePendingNotificationActivation();
-        this._completePendingBrowserNotification();
         this._rememberFocusedApp();
     }
 
@@ -678,16 +736,15 @@ export default class WindowTrayExtension {
         // Preferences runs in a separate process, so merge into the latest file
         // instead of writing our in-memory copy: that way focus capture can never
         // clobber a tray-app edit that landed a moment earlier.
-        saveConfig({trayApps: this._config.trayApps, lastFocusedApp: captured});
+        saveConfig({...this._config, lastFocusedApp: captured});
         debug('config', `recorded last focused app ${appId}`);
     }
 
     // Notification handling
     //
-    // A notification from a configured app is a request to see that app. For
-    // Chromium/Edge PWAs the notification arrives from the generic browser
-    // source, so it is deferred briefly and attributed to whichever PWA window
-    // takes focus within that window.
+    // A notification from a configured app is a request to see that app. Generic
+    // Chromium-family notifications lack app identity, so routing is opt-in via
+    // configured URL-host hints and requires one matching PWA and one managed window.
     //
     // `notification.activate` is patched (not signal-connected) because
     // StNotification has no activation signal.
@@ -721,6 +778,7 @@ export default class WindowTrayExtension {
         const extension = this;
         const handle = patchRegistry.patchObject(notification, 'activate',
             function (original) {
+                const genericBrowser = !config;
                 if (extension._enabled) {
                     if (config) {
                         debug('notification',
@@ -728,13 +786,19 @@ export default class WindowTrayExtension {
                         extension._queueNotificationActivation(config);
                     } else {
                         debug('notification',
-                            `deferring generic browser source ${source.app?.get_id()}`);
-                        extension._queueBrowserNotification(source);
+                            `checking generic browser source ${source.app?.get_id()}`);
+                        extension._queueBrowserNotification(source, notification);
                     }
                 }
                 try {
                     return original.call(this);
                 } finally {
+                    if (extension._enabled) {
+                        const focused = global.display.get_focus_window();
+                        debug('notification', `${genericBrowser ? 'generic browser' : config.name} `
+                            + `notification activation returned; focus="${windowTitle(focused)}", `
+                            + `workspace=${focused?.get_workspace?.()?.index?.() ?? '?'}`);
+                    }
                     // GNOME's source.open() and GTK action paths do this too,
                     // but the freedesktop default-action path does not.
                     Main.panel.closeCalendar();
@@ -752,7 +816,7 @@ export default class WindowTrayExtension {
     /**
      * True for a notification source belonging to a Chromium-family browser when
      * at least one configured tray app is a PWA. Such a notification does not say
-     * which PWA it came from, so it is attributed later by focus.
+     * which PWA it came from, so routing requires explicit host hints.
      */
     _isGenericBrowserSource(source) {
         return matching.isGenericBrowserAppId(source?.app?.get_id?.()) &&
@@ -797,47 +861,47 @@ export default class WindowTrayExtension {
         });
     }
 
-    _queueBrowserNotification(source) {
-        this._cancel(this, '_pendingBrowserNotificationTimer');
-        this._pendingBrowserNotification = {
-            workspace: global.workspace_manager.get_active_workspace(),
-            sourceId: source?.app?.get_id?.() ?? 'browser',
-        };
-        this._pendingBrowserNotificationTimer = GLib.timeout_add(
-            GLib.PRIORITY_DEFAULT, BROWSER_NOTIFICATION_TIMEOUT_MS, () => {
-                this._pendingBrowserNotification = null;
-                this._pendingBrowserNotificationTimer = 0;
-                return GLib.SOURCE_REMOVE;
-            });
-    }
-
-    _completePendingBrowserNotification() {
-        const pending = this._pendingBrowserNotification;
-        const window = global.display.get_focus_window();
-        const record = window ? this._windowRecords.get(window) : null;
-        if (!pending || !record || !matching.isChromiumPwaConfig(record.config))
+    _queueBrowserNotification(source, notification) {
+        const sourceId = source?.app?.get_id?.() ?? 'browser';
+        const hosts = matching.notificationHosts(
+            notification?.body,
+            notification?.bodyMarkup,
+            notification?.get_body?.());
+        if (hosts.length === 0) {
+            debug('notification', `generic ${sourceId}: no URL in notification text; `
+                + 'left to Brave without window-tray routing');
             return;
+        }
 
-        this._pendingBrowserNotification = null;
-        this._cancel(this, '_pendingBrowserNotificationTimer');
+        const configs = matching.configsForNotificationHosts(hosts, this._config.trayApps)
+            .filter(config => matching.isChromiumPwaConfig(config));
+        if (configs.length !== 1) {
+            debug('notification', `generic ${sourceId}: URL host(s) ${hosts.join(', ')} matched `
+                + `${configs.length} configured PWAs; left to Brave without window-tray routing`);
+            return;
+        }
 
+        const config = configs[0];
+        const windows = [...this._windowRecords.entries()]
+            .filter(([, record]) => record.config === config)
+            .map(([window]) => window);
+        if (windows.length !== 1) {
+            debug('notification', `generic ${sourceId}: ${config.name} matched, but has `
+                + `${windows.length} managed windows; left to Brave without window-tray routing`);
+            return;
+        }
+
+        const window = windows[0];
+        const workspace = global.workspace_manager.get_active_workspace();
+        debug('notification', `generic ${sourceId}: URL host(s) ${hosts.join(', ')} uniquely `
+            + `matched ${config.name} and one managed window`);
+        // Run after Brave's own notification action, then activate the known
+        // window. Do not infer identity from whichever browser window happens
+        // to take focus next.
         GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-            if (!this._enabled)
+            if (!this._enabled || this._windowRecords.get(window)?.config !== config)
                 return GLib.SOURCE_REMOVE;
-            try {
-                const target = workspaceExists(pending.workspace)
-                    ? pending.workspace
-                    : global.workspace_manager.get_active_workspace();
-                if (window.get_workspace() !== target)
-                    window.change_workspace(target);
-                if (window.minimized)
-                    window.unminimize();
-                window.activate_with_workspace(global.get_current_time(), target);
-                debug('notification', `generic ${pending.sourceId} notification resolved `
-                    + `to ${record.config.name}`);
-            } catch (e) {
-                error(`browser notification restore failed: ${e.message}`);
-            }
+            this._bringWindowHere(window, 'browser notification', workspace);
             return GLib.SOURCE_REMOVE;
         });
     }

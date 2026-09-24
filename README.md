@@ -49,6 +49,8 @@ you want a dedicated tray workspace, this is explicitly not it.
 - Activating a configured app from the dash, an app grid, a launcher, or its own
   notification moves its existing window to the current workspace instead of
   switching you to where you left it.
+- This move-to-current-workspace behavior can be disabled in preferences to use
+  GNOME's normal workspace switching instead.
 - Works with external launchers (e.g. Vicinae) that ask a single-instance app to
   present its existing window.
 - Explicit "new window" actions — middle-click, Ctrl+click, **New Window** —
@@ -110,7 +112,7 @@ intentional, and it has one sharp edge worth knowing:
 > For an exact match use the full desktop ID.
 
 Config lives in `~/.config/window-tray/config.json` and is picked up live — no
-restart needed after changing the app list.
+restart needed after changing applications or workspace behavior.
 
 ## Known limitations
 
@@ -119,14 +121,15 @@ boundaries of the current implementation.
 
 - **GNOME Shell 50 only** (`"shell-version": ["50"]`). Older shells are not
   supported yet; backports are welcome and tracked in the issue tracker.
-- **Chromium/Brave PWAs and notifications.** Some Chromium PWAs (e.g. WhatsApp
-  in Brave) publish notifications under the *generic browser* desktop ID rather
-  than the PWA's own ID, so the notification carries no app information. Window
-  Tray then lets the browser resolve its own target and falls back to
-  recognizing a configured PWA by WM class / `crx_<id>` when it gains focus,
-  returning it to the workspace where the notification was clicked. It never
-  guesses from arbitrary window titles. Native apps and correctly identified
-  PWAs take the direct path.
+- **Generic Chromium/Brave notifications.** Some PWAs notify under the generic
+  browser desktop ID. In Preferences, you can add notification URL host hints to
+  a PWA entry (for example, `chat.example.com`). Window Tray uses the first URL
+  in the notification body and routes only when it matches exactly one configured PWA and that
+  PWA has exactly one managed window. Otherwise Brave handles the notification
+  without Window Tray moving a window. The URL is only a hint: if a notification
+  includes a link to another site first, it may not identify the sender. Desktop-file
+  app IDs and `StartupWMClass` identify PWA windows, but do not identify which
+  PWA produced a generic notification.
 - **Nothing is closed implicitly.** A tray row's × sends a normal close request;
   the app may still show its own dialogs or refuse.
 - Windows that are already `skip-taskbar` (many docks, panels, notifications,

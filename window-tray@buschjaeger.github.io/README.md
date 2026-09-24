@@ -29,6 +29,8 @@ parking workspace is created.
 - Activating a configured app from the dash, app grid, a launcher (e.g.
   Vicinae), or its notification brings its existing window to the current
   workspace instead of switching you to it.
+- This move-to-current-workspace behavior can be disabled in preferences to use
+  GNOME's normal workspace switching instead.
 - **New window**, middle-click, and Ctrl+click keep their normal meaning.
 - Intentional workspace moves (`Shift+Ctrl+Alt+←/→`, overview drag-and-drop) are
   never intercepted.
@@ -69,17 +71,19 @@ Fastest: focus the app you want trayed, open Window Tray's preferences, choose
 > desktop ID for an exact match.
 
 Config lives in `~/.config/window-tray/config.json` and reloads live — no restart
-after editing the app list.
+after editing the app list or workspace behavior.
 
 ## Known limitations
 
 - **GNOME Shell 50 only.** Backports welcome.
-- **Chromium/Brave PWAs and notifications.** Some PWAs (e.g. WhatsApp in Brave)
-  publish notifications under the generic browser desktop ID, carrying no app
-  information. Window Tray lets the browser resolve its own target, then
-  recognizes a configured PWA by WM class / `crx_<id>` on focus and returns it to
-  the workspace where the notification was clicked. It never guesses from window
-  titles.
+- **Generic Chromium/Brave notifications.** Some PWAs publish notifications
+  under the generic browser desktop ID. Add notification URL host hints to a
+  PWA entry in Preferences (for example, `chat.example.com`). Window Tray uses
+  the first URL in the notification body and routes only if it matches exactly one configured PWA
+  and that PWA has exactly one managed window. Otherwise Brave handles the
+  notification without Window Tray moving a window. A URL in the notification
+  is only a hint and may link to a different site first; the browser's desktop-file
+  app ID and `StartupWMClass` identify PWA windows, not notification origins.
 - A tray row's × sends a normal close *request*; apps may still veto.
 - `skip-taskbar` windows (docks, panels, many notification windows) are never
   trayed.

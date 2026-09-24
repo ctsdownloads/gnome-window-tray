@@ -41,12 +41,21 @@ export default class WindowTrayPreferences extends ExtensionPreferences {
             title: 'Behavior',
             description: 'Minimizing a configured app puts its window in the panel tray '
                 + 'and hides it from the overview, Alt+Tab, and taskbars. '
-                + 'Activating it moves its existing window to the current workspace. '
                 + 'The window close button, File → Quit, and Alt+F4 keep their normal behavior.',
+        });
+        const moveRow = new Adw.SwitchRow({
+            title: 'Move activated windows to the current workspace',
+            subtitle: 'When disabled, GNOME switches to the workspace containing the window.',
+            active: this._config.moveToCurrentWorkspace,
+        });
+        group.add(moveRow);
+        moveRow.connect('notify::active', () => {
+            this._config.moveToCurrentWorkspace = moveRow.active;
+            this._save();
         });
         group.add(new Adw.ActionRow({
             title: 'Restore a window',
-            subtitle: 'Click its tray row to move it to the current workspace and focus it.',
+            subtitle: 'Click its tray row to restore and focus it using the workspace behavior above.',
         }));
         group.add(new Adw.ActionRow({
             title: 'Close a window',
@@ -120,7 +129,12 @@ export default class WindowTrayPreferences extends ExtensionPreferences {
         for (const app of this._config.trayApps) {
             const row = new Adw.ActionRow({
                 title: app.name || 'Unnamed application',
-                subtitle: `desktop-ID prefix: ${app.desktopIdPrefixes.join(', ')}`,
+                subtitle: [
+                    `desktop-ID prefix: ${app.desktopIdPrefixes.join(', ')}`,
+                    app.notificationDomains?.length
+                        ? `notification domains: ${app.notificationDomains.join(', ')}`
+                        : null,
+                ].filter(Boolean).join(' · '),
             });
 
             const edit = new Gtk.Button({label: 'Edit', valign: Gtk.Align.CENTER});
@@ -162,7 +176,7 @@ export default class WindowTrayPreferences extends ExtensionPreferences {
     }
 
     _save() {
-        saveConfig({trayApps: this._config.trayApps, lastFocusedApp: this._config.lastFocusedApp});
+        saveConfig(this._config);
     }
 
     _showApplicationDialog(initial = {}, onSave = null) {
@@ -187,13 +201,24 @@ export default class WindowTrayPreferences extends ExtensionPreferences {
             placeholder_text: 'Mattermost, mattermost-desktop',
             text: (initial.desktopIdPrefixes ?? []).join(', '),
         });
+        const domains = new Gtk.Entry({
+            placeholder_text: 'chat.example.com, mail.example.org',
+            text: (initial.notificationDomains ?? []).join(', '),
+        });
         for (const [labelText, entry] of [
             ['Display name', name],
             ['Desktop-ID prefixes (comma-separated)', prefixes],
+            ['Notification site domains (optional, comma-separated)', domains],
         ]) {
             box.append(new Gtk.Label({label: labelText, xalign: 0}));
             box.append(entry);
         }
+        box.append(new Gtk.Label({
+            label: 'Uses the first URL in a generic Brave/Chromium notification body as a hint. '
+                + 'Routing happens only when exactly one configured app matches.',
+            xalign: 0,
+            wrap: true,
+        }));
 
         const errorLabel = new Gtk.Label({
             label: '',
@@ -223,6 +248,10 @@ export default class WindowTrayPreferences extends ExtensionPreferences {
             const updated = {
                 name: name.text.trim() || 'Unnamed application',
                 desktopIdPrefixes,
+                notificationDomains: [...new Set(domains.text
+                    .split(',').map(item => item.trim().toLowerCase()
+                        .replace(/^https?:\/\//, '').split(/[/:?#]/, 1)[0])
+                    .filter(Boolean))],
             };
             if (onSave) {
                 onSave(updated);

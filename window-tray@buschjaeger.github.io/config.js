@@ -4,8 +4,10 @@
 //
 //   {
 //     "trayApps": [
-//       {"name": "Mattermost", "desktopIdPrefixes": ["Mattermost"]}
+//       {"name": "Mattermost", "desktopIdPrefixes": ["Mattermost"],
+//        "notificationDomains": ["chat.example.com"]}
 //     ],
+//     "moveToCurrentWorkspace": true,
 //     "lastFocusedApp": {"appId": "firefox.desktop", "title": "Firefox"}
 //   }
 //
@@ -40,6 +42,7 @@ const CONFIG_FILE_NAME = 'config.json';
 
 export const DEFAULT_CONFIG = Object.freeze({
     trayApps: [],
+    moveToCurrentWorkspace: true,
     lastFocusedApp: null,
 });
 
@@ -73,7 +76,11 @@ function clone(value) {
 
 /** The single normalization point. Guarantees shape; never throws. */
 function normalize(raw) {
-    const config = {trayApps: [], lastFocusedApp: null};
+    const config = {
+        trayApps: [],
+        moveToCurrentWorkspace: true,
+        lastFocusedApp: null,
+    };
     if (!raw || typeof raw !== 'object')
         return config;
 
@@ -86,10 +93,19 @@ function normalize(raw) {
                     ? [...new Set(app.desktopIdPrefixes
                         .map(value => String(value).trim()).filter(Boolean))]
                     : [],
+                notificationDomains: Array.isArray(app.notificationDomains)
+                    ? [...new Set(app.notificationDomains
+                        .map(value => String(value).trim().toLowerCase()
+                            .replace(/^https?:\/\//, '').split(/[/:?#]/, 1)[0])
+                        .filter(Boolean))]
+                    : [],
             }))
             // An app with no prefixes could never match anything.
             .filter(app => app.desktopIdPrefixes.length > 0);
     }
+
+    if (typeof raw.moveToCurrentWorkspace === 'boolean')
+        config.moveToCurrentWorkspace = raw.moveToCurrentWorkspace;
 
     if (raw.lastFocusedApp && typeof raw.lastFocusedApp === 'object') {
         const appId = String(raw.lastFocusedApp.appId ?? '');
