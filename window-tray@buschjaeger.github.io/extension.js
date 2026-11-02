@@ -423,10 +423,18 @@ export default class WindowTrayExtension {
                 return config;
             }
         }
+        const keys = matching.windowWmClassKeys(window);
+        const pwaConfig = matching.matchChromiumWindowKeys(keys, this._config.trayApps);
+        if (pwaConfig) {
+            debug('match', `window "${windowTitle(window)}" pwa id in ${keys.join(', ')} -> ${pwaConfig.name}`);
+            return pwaConfig;
+        }
         const app = Shell.WindowTracker.get_default().get_window_app(window);
         const config = matching.matchApp(app, this._config.trayApps);
         if (config)
             debug('match', `window "${windowTitle(window)}" app ${app?.get_id?.()} -> ${config.name}`);
+        else
+            debug('match', `window "${windowTitle(window)}" wm-class ${keys.join(', ') || '(none)'} app ${app?.get_id?.()} -> no tray app`);
         return config;
     }
 
@@ -726,10 +734,19 @@ export default class WindowTrayExtension {
     _rememberFocusedApp() {
         const window = global.display.get_focus_window();
         const app = window ? Shell.WindowTracker.get_default().get_window_app(window) : null;
-        const appId = app?.get_id?.() ?? '';
+        let appId = app?.get_id?.() ?? '';
         if (matching.isSelfOrInternalAppId(appId))
             return;
-        const captured = {appId, title: app.get_name() ?? windowTitle(window)};
+        let title = app.get_name() ?? windowTitle(window);
+        // On Wayland, Shell often resolves a Chromium-family PWA window to the
+        // generic browser. Record the PWA's own desktop entry instead, so
+        // "Use last focused application" adds the web app, not the whole browser.
+        const pwaApp = findPwaApp(window);
+        if (pwaApp) {
+            appId = pwaApp.get_id();
+            title = pwaApp.get_name() ?? title;
+        }
+        const captured = {appId, title};
         const previous = loadConfig().lastFocusedApp;
         if (previous?.appId === captured.appId && previous?.title === captured.title)
             return;
@@ -911,6 +928,17 @@ export default class WindowTrayExtension {
 
 function windowTitle(window) {
     return window?.get_title?.() ?? '(untitled)';
+}
+
+/** The installed desktop entry for a Chromium-family PWA window, or null. */
+function findPwaApp(window) {
+    const windowId = matching.windowWmClassKeys(window)
+        .map(key => matching.extractChromiumAppId(key)).find(Boolean);
+    if (!windowId)
+        return null;
+    return Shell.AppSystem.get_default().get_installed()
+        .map(info => Shell.AppSystem.get_default().lookup_app(info.get_id()))
+        .find(app => app && matching.extractChromiumAppId(app.get_id()) === windowId) ?? null;
 }
 
 function isTrayEligibleWindow(window) {

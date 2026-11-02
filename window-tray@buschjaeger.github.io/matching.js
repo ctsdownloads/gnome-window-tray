@@ -17,7 +17,30 @@ export function normalizeId(value) {
  * (`chrome-<id>-Default`). This extracts it.
  */
 export function extractChromiumAppId(value) {
-    return String(value ?? '').match(/(?:^|-)([a-p]{32})(?:-|$)/i)?.[1]?.toLowerCase() ?? null;
+    // Matches every form a Chromium-family PWA id appears in:
+    //   X11 WM_CLASS            crx_<id>
+    //   Wayland app_id          brave-<id>-Default, chrome-<id>-Profile_1, ...
+    //   desktop IDs             brave-<id>-Default, com.brave.Browser.flextop.brave-<id>-Default
+    return String(value ?? '').match(/(?:^|[-_.])([a-p]{32})(?:[-_.]|$)/i)?.[1]?.toLowerCase() ?? null;
+}
+
+/**
+ * Finds the PWA tray config whose configured desktop ID carries the same
+ * Chromium app id as one of the window's WM_CLASS keys. This covers native
+ * Wayland, where the window reports `<browser>-<id>-<profile>` instead of the
+ * `crx_<id>` value that desktop files declare as StartupWMClass.
+ */
+export function matchChromiumWindowKeys(keys, trayApps) {
+    for (const key of keys ?? []) {
+        const windowId = extractChromiumAppId(key);
+        if (!windowId)
+            continue;
+        const config = trayApps?.find(candidate =>
+            prefixesOf(candidate).some(prefix => extractChromiumAppId(prefix) === windowId));
+        if (config)
+            return config;
+    }
+    return null;
 }
 
 /** True if any prefix looks like a Chromium PWA desktop ID. */
@@ -136,7 +159,7 @@ export function matchWindow(window, trayApps, wmClassIndex) {
         if (config)
             return config;
     }
-    return null;
+    return matchChromiumWindowKeys(windowWmClassKeys(window), trayApps);
 }
 
 /** Keys to probe for a window, lowercased, without duplicates. */
