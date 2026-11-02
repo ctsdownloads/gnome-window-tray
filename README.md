@@ -3,7 +3,7 @@
 A GNOME Shell extension that turns *minimize* into a real system tray for the
 apps you choose — instead of a workspace.
 
-**GNOME Shell 50 · Wayland · X11 · MIT/GPL-2.0 (see [License](#license))**
+**GNOME Shell 50+ · Wayland · X11 · MIT/GPL-2.0 (see [License](#license))**
 
 <p align="left">
   <img src="docs/screenshot.png" alt="Window Tray panel menu with two minimized windows" width="420">
@@ -119,8 +119,8 @@ restart needed after changing applications or workspace behavior.
 Please read this before filing "it doesn't work with X" — these are the real
 boundaries of the current implementation.
 
-- **GNOME Shell 50 only** (`"shell-version": ["50"]`). Older shells are not
-  supported yet; backports are welcome and tracked in the issue tracker.
+- **GNOME Shell 50, 51 and 52** (`"shell-version": ["50", "51", "52"]`). Older shells are not
+  supported.
 - **Generic Chromium/Brave notifications.** Some PWAs notify under the generic
   browser desktop ID. In Preferences, you can add notification URL host hints to
   a PWA entry (for example, `chat.example.com`). Window Tray uses the first URL

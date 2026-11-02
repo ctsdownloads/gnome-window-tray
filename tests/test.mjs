@@ -144,6 +144,17 @@ check('matchWindow finds PWA by crx_ WM_CLASS',
     matching.matchWindow(window(crxKey), TRAY, wmIndex) === pwa);
 check('matchWindow ignores unindexed WM_CLASS',
     matching.matchWindow(window('gnome-calculator'), TRAY, wmIndex) === null);
+check('matchWindow finds PWA by Wayland app_id',
+    matching.matchWindow(window(`brave-${CRX_ID}-Default`), TRAY, wmIndex) === pwa);
+check('matchWindow finds PWA by Wayland app_id with another profile',
+    matching.matchWindow(window(`chrome-${CRX_ID}-Profile_1`), TRAY, wmIndex) === pwa);
+check('matchWindow finds PWA configured by Flatpak desktop ID',
+    matching.matchWindow(window(`brave-${CRX_ID}-Default`),
+        [{name: 'Flatpak PWA', desktopIdPrefixes: [`com.brave.Browser.flextop.brave-${CRX_ID}-Default`]}],
+        new Map())?.name === 'Flatpak PWA');
+check('matchWindow ignores a different PWA id',
+    matching.matchWindow(window(`brave-${'b'.repeat(32)}-Default`), TRAY, wmIndex) === null);
+eq('extractChromiumAppId from crx_<id>', matching.extractChromiumAppId(crxKey), CRX_ID);
 check('buildWmClassIndex first config wins on collision',
     matching.buildWmClassIndex([firefox, {name: 'X', desktopIdPrefixes: ['firefox']}],
         () => ['firefox']).get('firefox') === firefox);

@@ -3,7 +3,7 @@
 GNOME Shell extension: **minimize-to-tray for the apps you choose**, instead of
 a workspace.
 
-**GNOME Shell 50 · Wayland · X11 · GPL-2.0-only**
+**GNOME Shell 50+ · Wayland · X11 · GPL-2.0-only**
 
 ## Why not workspaces?
 
@@ -75,7 +75,7 @@ after editing the app list or workspace behavior.
 
 ## Known limitations
 
-- **GNOME Shell 50 only.** Backports welcome.
+- **GNOME Shell 50, 51 and 52.**
 - **Generic Chromium/Brave notifications.** Some PWAs publish notifications
   under the generic browser desktop ID. Add notification URL host hints to a
   PWA entry in Preferences (for example, `chat.example.com`). Window Tray uses
