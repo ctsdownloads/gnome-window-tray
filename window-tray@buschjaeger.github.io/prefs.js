@@ -108,6 +108,10 @@ export default class WindowTrayPreferences extends ExtensionPreferences {
             this._appsGroup.remove(row);
         this._appRows = [];
 
+        this._addEntryRow('Choose from installed applications',
+            'Pick an app from a searchable list, including Flatpaks and browser web apps.',
+            () => this._showAppPickerDialog());
+
         this._addEntryRow('Add application manually',
             'Enter a display name and one or more desktop-ID prefixes.',
             () => this._showApplicationDialog());
@@ -268,6 +272,79 @@ export default class WindowTrayPreferences extends ExtensionPreferences {
 
         dialog.child = box;
         dialog.present(this._window);
+    }
+
+    _showAppPickerDialog() {
+        const configured = new Set(this._config.trayApps
+            .flatMap(app => app.desktopIdPrefixes.map(prefix => prefix.toLowerCase())));
+        const apps = Gio.AppInfo.get_all()
+            .filter(info => info.should_show() && info.get_id())
+            .sort((a, b) => a.get_display_name().localeCompare(b.get_display_name()));
+
+        const dialog = new Adw.Dialog({
+            title: 'Choose an application',
+            content_width: 460,
+            content_height: 560,
+        });
+        const toolbar = new Adw.ToolbarView();
+        toolbar.add_top_bar(new Adw.HeaderBar());
+
+        const box = new Gtk.Box({
+            orientation: Gtk.Orientation.VERTICAL,
+            spacing: 12,
+            margin_top: 6,
+            margin_bottom: 18,
+            margin_start: 18,
+            margin_end: 18,
+        });
+        const search = new Gtk.SearchEntry({placeholder_text: 'Search applications'});
+        box.append(search);
+
+        const list = new Gtk.ListBox({selection_mode: Gtk.SelectionMode.NONE});
+        list.add_css_class('boxed-list');
+        for (const info of apps) {
+            const id = info.get_id().replace(/\.desktop$/i, '');
+            const added = configured.has(id.toLowerCase());
+            const row = new Adw.ActionRow({
+                title: GLib.markup_escape_text(info.get_display_name(), -1),
+                subtitle: added ? 'Already in the tray list' : '',
+                activatable: !added,
+                sensitive: !added,
+            });
+            const icon = info.get_icon();
+            row.add_prefix(icon
+                ? new Gtk.Image({gicon: icon, pixel_size: 32})
+                : new Gtk.Image({icon_name: 'application-x-executable', pixel_size: 32}));
+            row._searchText = `${info.get_display_name()} ${id}`.toLowerCase();
+            row.connect('activated', () => {
+                this._config.trayApps.push({
+                    name: info.get_display_name(),
+                    desktopIdPrefixes: [id],
+                    notificationDomains: [],
+                });
+                this._save();
+                this._renderApps();
+                dialog.close();
+            });
+            list.append(row);
+        }
+        list.set_filter_func(row => {
+            const query = search.text.trim().toLowerCase();
+            return !query || row._searchText.includes(query);
+        });
+        search.connect('search-changed', () => list.invalidate_filter());
+
+        const scroller = new Gtk.ScrolledWindow({
+            hscrollbar_policy: Gtk.PolicyType.NEVER,
+            vexpand: true,
+            child: list,
+        });
+        box.append(scroller);
+
+        toolbar.content = box;
+        dialog.child = toolbar;
+        dialog.present(this._window);
+        search.grab_focus();
     }
 
     _showNoFocusedAppDialog() {

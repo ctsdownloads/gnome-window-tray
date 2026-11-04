@@ -13,6 +13,21 @@ apps you choose — instead of a workspace.
 > recording: minimize an app → it disappears from Alt+Tab and the overview →
 > click its tray row on another workspace → it appears there.
 
+## Changes in this fork
+
+This is a fork of [sbuschjaeger/gnome-window-tray](https://github.com/sbuschjaeger/gnome-window-tray) with these changes:
+
+- **Web apps work on Wayland.** Brave and Chrome web apps (PWAs) report
+  `brave-<id>-Default` on Wayland instead of `crx_<id>`, so they were never
+  matched and minimize didn't send them to the tray. They're now matched by
+  their app id in any form, including Flatpak browsers.
+- **Pick apps from a list.** Preferences has a new **Choose from installed
+  applications** option with a searchable list of your apps, Flatpaks and web
+  apps included. No need to know desktop IDs.
+- **Use last focused application** now adds the web app itself instead of the
+  whole browser.
+- **GNOME Shell 50, 51 and 52** are supported.
+
 ## The problem with "one workspace per project"
 
 The usual GNOME mental model is *one workspace per task or project*, and it
@@ -99,6 +114,9 @@ gnome-extensions prefs window-tray@buschjaeger.github.io
 ## Configure
 
 Open the preferences (Extensions app → Window Tray → ⚙, or the command above).
+
+**Pick from a list:** hit **Choose from installed applications**, search for the
+app, and click it. That's it.
 
 **Easiest path:** focus the app you want in the tray, open Window Tray's
 preferences, hit **Use last focused application**. The extension records the last
@@ -200,6 +218,14 @@ GPL-2.0-only (see `LICENSE`), as is customary for GNOME Shell extensions that
 link against GNOME Shell itself.
 
 ## Changelog
+
+### Fork changes
+
+- Match Brave/Chrome web apps on Wayland (`brave-<id>-Default` window ids),
+  including Flatpak browsers.
+- Add **Choose from installed applications** picker to preferences.
+- **Use last focused application** records the web app, not the browser.
+- Support GNOME Shell 51 and 52.
 
 ### 1.0
 
