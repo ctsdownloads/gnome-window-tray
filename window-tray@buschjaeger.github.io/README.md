@@ -64,7 +64,10 @@ From the working tree: `./scripts/pack.sh --install`.
 gnome-extensions prefs window-tray@buschjaeger.github.io
 ```
 
-Fastest: focus the app you want trayed, open Window Tray's preferences, choose
+Simplest: choose **Choose from installed applications**, search, and click the
+app. Works for Flatpaks and Brave/Chrome web apps too.
+
+Or: focus the app you want trayed, open Window Tray's preferences, choose
 **Use last focused application**. Or add apps by desktop-ID prefix.
 
 > Prefix matching means `firefox` also matches `firefox-browser`. Use the full
